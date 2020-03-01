@@ -1,0 +1,212 @@
+---
+title: "data621_hw1_mia_wei"
+author: "Wei Zhou"
+date: "2/29/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(corrplot)
+library(psych)
+```
+
+```{r}
+train <- read.csv("https://raw.githubusercontent.com/miachen410/DATA621/master/moneyball-training-data.csv")
+head(train)
+```
+
+## 1. DATA EXPLORATION (25 Points)
+Describe the size and the variables in the moneyball training data set. Consider that too much detail will cause a manager to lose interest while too little detail will make the manager consider that you aren’t doing your job. Some suggestions are given below. Please do NOT treat this as a check list of things to do to complete the assignment. You should have your own thoughts on what to tell the boss. These are just ideas.
+
+```{r}
+# Cleaning the column names by removing TEAMS_
+names(train) <- gsub("TEAM_", "", names(train))
+summary(train)
+
+```
+
+### a. Mean / Standard Deviation / Median
+```{r}
+ggplot(train, aes(x = TARGET_WINS)) +
+  geom_histogram()
+```
+
+### b. Bar Chart or Box Plot of the data
+```{r}
+library(reshape)
+library(ggplot2)
+
+par(mfrow = c(3, 3))
+
+datasub = melt(train)
+ggplot(datasub, aes(x= value)) + 
+    geom_density(fill='blue') + 
+    facet_wrap(~variable, scales = 'free') 
+```
+
+### c. Is the data correlated to the target variable (or to other variables?)
+Findings: 
+1. TEAM_BATTING_H exhibits the highest correlation to the response variable,
+2. TEAM_FIELDING_E exhibits the lowest correlation
+3. Both TEAM_PITCHING_HR and TEAM_PITCHING_BB exhibit positive correlations to the response variable 
+4. The correlation plot shows that TARGET_WINS is positively correlated with BATTING_H, BATTING_2B, BATTING_HR, BATTING_BB, PITCHING_H, PITCHING_HR, PITCHING_BB and negatively correlated with FIELDING_E. Thus we are going to construct our linear model by selecting from these attributes.
+
+```{r}
+library(corrplot)
+library(corrgram)
+corrplot(corrgram(train), method="circle")
+```
+
+### d. Are any of the variables missing and need to be imputed “fixed”?
+
+```{r,echo=FALSE}
+library(VIM)
+aggr_plot <- aggr(train, 
+                  col=c('grey','blue'), 
+                  numbers=TRUE, 
+                  sortVars=TRUE, 
+                  labels=names(train), 
+                  cex.axis=.7,
+                  gap=3, 
+                  ylab=c("Histogram of missing data","Pattern"))
+
+```
+
+## 2. DATA PREPARATION (25 Points)
+Describe how you have transformed the data by changing the original variables or creating new variables. If you did transform the data or create new variables, discuss why you did this. Here are some possible transformations.
+a. Fix missing values (maybe with a Mean or Median value)
+b. Create flags to suggest if a variable was missing
+c. Transform data by putting it into buckets
+d. Mathematical transforms such as log or square root (or use Box-Cox)
+e. Combine variables (such as ratios or adding or multiplying) to create new variables
+
+### Missing imputation 
+We’ll fill in the missing values using their respective median values.
+```{r}
+train_clean = train %>% mutate(
+  PITCHING_SO = ifelse(is.na(train$PITCHING_SO), median(train$PITCHING_SO, na.rm = TRUE),train$PITCHING_SO),
+  BATTING_SO = ifelse(is.na(train$BATTING_SO), median(train$BATTING_SO, na.rm = TRUE), train$BATTING_SO),
+  BASERUN_SB = ifelse(is.na(train$BASERUN_SB), median(train$BASERUN_SB, na.rm = TRUE), train$BASERUN_SB),
+  BASERUN_CS = ifelse(is.na(train$BASERUN_CS), median(train$BASERUN_CS, na.rm = TRUE), train$BASERUN_CS),
+  FIELDING_DP = ifelse(is.na(train$FIELDING_DP), median(train$FIELDING_DP, na.rm = TRUE), train$FIELDING_DP))
+
+```
+
+### Feature engineering
+We’ll add a new variable BATTING_HBP_YN that is 1 when the TEAM_BATTING_HBP exists and 0 when it does not.
+```{r}
+train_clean = train_clean %>% mutate(BATTING_HBP_YN = ifelse(is.na(BATTING_HBP), 0, 1),
+                                     BATTING_1B = BATTING_H - BATTING_2B - BATTING_3B - BATTING_HR)
+```
+For columns containing lots of outliers: 
+```{r}
+train_clean = train_clean %>% 
+  mutate('PITCHER_OUTLIER_YN' = ifelse(PITCHING_H > quantile(PITCHING_H, 0.75) + 1.5 * IQR(PITCHING_H) |
+                                       PITCHING_H < quantile(PITCHING_H, 0.25) - 1.5 * IQR(PITCHING_H), 
+                                       1, 0))
+train_clean = train_clean %>% 
+  mutate('BATTING_OUTLIER_YN' = ifelse(BATTING_1B > quantile(BATTING_1B, 0.75) + 1.5 * IQR(BATTING_1B) |
+                                       BATTING_1B < quantile(BATTING_1B, 0.25) - 1.5 * IQR(BATTING_1B), 
+                                       1, 0))
+train_clean = train_clean %>% 
+  mutate('BATTING_OUTLIER_YN' = ifelse(BATTING_1B > quantile(BATTING_1B, 0.75) + 1.5 * IQR(BATTING_1B) |
+                                       BATTING_1B < quantile(BATTING_1B, 0.25) - 1.5 * IQR(BATTING_1B), 
+                                       1, 0))
+train_clean = train_clean %>%
+  mutate('BASERUN_OUTLIER_YN' = ifelse(BASERUN_SB > quantile(BASERUN_SB, 0.75) + 1.5 * IQR(BASERUN_SB) |
+                                       BASERUN_SB < quantile(BASERUN_SB, 0.25) - 1.5 * IQR(BASERUN_SB),
+                                       1, 0))
+train_clean = train_clean %>% 
+  mutate('FIELDING_OUTLIER_YN' = ifelse(FIELDING_E > quantile(FIELDING_E, 0.75) + 1.5 * IQR(FIELDING_E) |
+                                       FIELDING_E < quantile(FIELDING_E, 0.25) - 1.5 * IQR(FIELDING_E), 
+                                       1, 0))
+```
+
+Creat ratios: 
+TARGET_WINS_Ratio = TARGET_WINS / 162 (i.e. the percentage of wins)
+TEAM_H_Ratio = (TEAM_BATTING_1B + TEAM_BATTING_2B + TEAM_BATTING_3B + TEAM_BATTING_HR) / TEAM_PITCHING_H (i.e. the ratio of hits earned to hits allowed)
+TEAM_BASERUN_Ratio = TEAM_BASERUN_SB / TEAM_BASERUN_CS (i.e. the ratio of successful steals to unsuccessful ones)
+TEAM_HR_SO_Ratio = TEAM_BATTING_HR / TEAM_BATTING_SO (i.e. the ratio of home runs to strikeouts)
+```{r}
+train_clean = train_clean %>%
+  mutate(TARGET_WINS_Ratio = TARGET_WINS / 162,
+         H_Ratio = (BATTING_1B + BATTING_2B + BATTING_3B + BATTING_HR) / PITCHING_H,
+         BASERUN_Ratio = BASERUN_SB / BASERUN_CS,
+         HR_SO_Ratio = BATTING_HR / ifelse(BATTING_SO == 0, median(BATTING_SO), BATTING_SO))
+```
+
+
+3. BUILD MODELS (25 Points)
+Using the training data set, build at least three different multiple linear regression models, using different variables (or the same variables with different transformations). Since we have not yet covered automated variable selection methods, you should select the variables manually (unless you previously learned Forward or Stepwise selection, etc.). Since you manually selected a variable for inclusion into the model or exclusion into the model, indicate why this was done.
+Discuss the coefficients in the models, do they make sense? For example, if a team hits a lot of Home Runs, it would be reasonably expected that such a team would win more games. However, if the coefficient is negative (suggesting that the team would lose more games), then that needs to be discussed. Are you keeping the model even though it is counter intuitive? Why? The boss needs to know.
+
+
+
+
+
+```{r}
+# pairs.panels(train_select, method = "pearson")
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(train$BATTING_H, train$TARGET_WINS)
+plot(log(train$BATTING_H), train$TARGET_WINS)
+plot(train$BATTING_H, log(train$TARGET_WINS))
+plot(log(train$BATTING_H), log(train$TARGET_WINS))
+par(mfrow=c(2,2))
+plot(train$BATTING_H, train$TARGET_WINS)
+plot(sqrt(train$BATTING_H), train$TARGET_WINS)
+plot(train$BATTING_H, sqrt(train$TARGET_WINS))
+plot(sqrt(train$BATTING_H), sqrt(train$TARGET_WINS))
+```
+
+Not much differences were made after the transformations.
+
+```{r}
+# lm1 <- lm(TARGET_WINS ~ log(BATTING_H), data = train_complete)
+# summary(lm1)
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(train$BATTING_2B, train$TARGET_WINS)
+plot(log(train$BATTING_2B), train$TARGET_WINS)
+plot(train$BATTING_2B, log(train$TARGET_WINS))
+plot(log(train$BATTING_2B), log(train$TARGET_WINS))
+par(mfrow=c(2,2))
+plot(train$BATTING_2B, train$TARGET_WINS)
+plot(sqrt(train$BATTING_2B), train$TARGET_WINS)
+plot(train$BATTING_2B, sqrt(train$TARGET_WINS))
+plot(sqrt(train$BATTING_2B), sqrt(train$TARGET_WINS))
+```
+
+```{r}
+lm2 <- lm(TARGET_WINS ~ BATTING_2B, data = train)
+summary(lm2)
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(train$BATTING_BB, train$TARGET_WINS)
+plot(log(train$BATTING_BB), train$TARGET_WINS)
+plot(train$BATTING_BB, log(train$TARGET_WINS))
+# plot(log(train$BATTING_BB), log(train$TARGET_WINS))
+par(mfrow=c(2,2))
+plot(train$BATTING_BB, train$TARGET_WINS)
+plot(sqrt(train$BATTING_BB), train$TARGET_WINS)
+plot(train$BATTING_BB, sqrt(train$TARGET_WINS))
+plot(sqrt(train$BATTING_BB), sqrt(train$TARGET_WINS))
+```
+
+```{r}
+# lm3 <- lm(TARGET_WINS ~ log(BATTING_BB), data = train_complete)
+# summary(lm3)
+```

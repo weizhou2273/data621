@@ -1,0 +1,104 @@
+---
+title: "Data621_hw1"
+author: "Wei Zhou"
+date: "2/29/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Read Data
+```{r,echo=FALSE}
+library(dplyr)
+train <- read.csv("./moneyball-training-data.csv")
+
+#remove the leading text "TEAM_" on the variable names to make our plots look less cluttered
+colnames(train) = gsub("TEAM_", "", colnames(train))
+
+#Remove index column
+train <- train[,-1]
+head(train)
+
+```
+
+
+## 1. DATA EXPLORATION (25 Points)
+Describe the size and the variables in the moneyball training data set. Consider that too much detail will cause a manager to lose interest while too little detail will make the manager consider that you aren’t doing your job. Some suggestions are given below. Please do NOT treat this as a check list of things to do to complete the assignment. You should have your own thoughts on what to tell the boss. These are just ideas.
+
+### a. Mean / Standard Deviation / Median
+```{r}
+summary(train)
+```
+```{r}
+apply(train, 2, sd, na.rm = TRUE)
+```
+
+### b. Bar Chart or Box Plot of the data
+
+```{r}
+library(reshape)
+library(ggplot2)
+
+par(mfrow = c(3, 3))
+
+datasub = melt(train)
+ggplot(datasub, aes(x= value)) + 
+    geom_density(fill='blue') + 
+    facet_wrap(~variable, scales = 'free') 
+```
+
+### c. Is the data correlated to the target variable (or to other variables?)
+Findings: 
+1. TEAM_BATTING_H exhibits the highest correlation to the response variable,
+2. TEAM_FIELDING_E exhibits the lowest correlation
+3. Both TEAM_PITCHING_HR and TEAM_PITCHING_BB exhibit positive correlations to the response variable 
+
+```{r}
+library(corrplot)
+library(corrgram)
+corrplot(corrgram(train), method="circle")
+```
+
+
+### d. Are any of the variables missing and need to be imputed “fixed”?
+
+```{r,echo=FALSE}
+library(VIM)
+aggr_plot <- aggr(train, 
+                  col=c('grey','blue'), 
+                  numbers=TRUE, 
+                  sortVars=TRUE, 
+                  labels=names(train), 
+                  cex.axis=.7,
+                  gap=3, 
+                  ylab=c("Histogram of missing data","Pattern"))
+
+```
+
+
+## 2. DATA PREPARATION (25 Points)
+Describe how you have transformed the data by changing the original variables or creating new variables. If you did transform the data or create new variables, discuss why you did this. Here are some possible transformations.
+a. Fix missing values (maybe with a Mean or Median value)
+b. Create flags to suggest if a variable was missing
+c. Transform data by putting it into buckets
+d. Mathematical transforms such as log or square root (or use Box-Cox)
+e. Combine variables (such as ratios or adding or multiplying) to create new variables
+
+### Missing imputation
+```{r}
+
+nulls <- data.frame(col = as.character(colnames(train)), 
+                    pct_null = colSums(is.na(train))*100/(colSums(is.na(train))+colSums(!is.na(train))))%>%
+  filter(col != 'INDEX')
+null_count <- ggplot(nulls, aes(x = col, y = pct_null))+
+  geom_bar(fill = yaz_cols[1], stat = 'identity')+
+  coord_flip()+
+  labs(title = 'Figure 0.1: Distribution of Missing Data',
+       x = element_blank(), y = 'Percent of Information Missing')+
+  theme_yaz()+
+  geom_hline(yintercept = 15, linetype = 'dashed')
+
+
+```
+
