@@ -88,7 +88,7 @@ d. Mathematical transforms such as log or square root (or use Box-Cox)
 e. Combine variables (such as ratios or adding or multiplying) to create new variables
 
 ### Missing imputation 
-We’ll fill in the missing values using their respective median values.
+Considering some columns has outliers, we’ll fill in the missing values using their respective median values.
 ```{r}
 train_clean = train %>% mutate(
   PITCHING_SO = ifelse(is.na(train$PITCHING_SO), median(train$PITCHING_SO, na.rm = TRUE),train$PITCHING_SO),
@@ -99,34 +99,12 @@ train_clean = train %>% mutate(
 
 ```
 
+
 ### Feature engineering
 We’ll add a new variable BATTING_HBP_YN that is 1 when the TEAM_BATTING_HBP exists and 0 when it does not.
 ```{r}
 train_clean = train_clean %>% mutate(BATTING_HBP_YN = ifelse(is.na(BATTING_HBP), 0, 1),
                                      BATTING_1B = BATTING_H - BATTING_2B - BATTING_3B - BATTING_HR)
-```
-For columns containing lots of outliers: 
-```{r}
-train_clean = train_clean %>% 
-  mutate('PITCHER_OUTLIER_YN' = ifelse(PITCHING_H > quantile(PITCHING_H, 0.75) + 1.5 * IQR(PITCHING_H) |
-                                       PITCHING_H < quantile(PITCHING_H, 0.25) - 1.5 * IQR(PITCHING_H), 
-                                       1, 0))
-train_clean = train_clean %>% 
-  mutate('BATTING_OUTLIER_YN' = ifelse(BATTING_1B > quantile(BATTING_1B, 0.75) + 1.5 * IQR(BATTING_1B) |
-                                       BATTING_1B < quantile(BATTING_1B, 0.25) - 1.5 * IQR(BATTING_1B), 
-                                       1, 0))
-train_clean = train_clean %>% 
-  mutate('BATTING_OUTLIER_YN' = ifelse(BATTING_1B > quantile(BATTING_1B, 0.75) + 1.5 * IQR(BATTING_1B) |
-                                       BATTING_1B < quantile(BATTING_1B, 0.25) - 1.5 * IQR(BATTING_1B), 
-                                       1, 0))
-train_clean = train_clean %>%
-  mutate('BASERUN_OUTLIER_YN' = ifelse(BASERUN_SB > quantile(BASERUN_SB, 0.75) + 1.5 * IQR(BASERUN_SB) |
-                                       BASERUN_SB < quantile(BASERUN_SB, 0.25) - 1.5 * IQR(BASERUN_SB),
-                                       1, 0))
-train_clean = train_clean %>% 
-  mutate('FIELDING_OUTLIER_YN' = ifelse(FIELDING_E > quantile(FIELDING_E, 0.75) + 1.5 * IQR(FIELDING_E) |
-                                       FIELDING_E < quantile(FIELDING_E, 0.25) - 1.5 * IQR(FIELDING_E), 
-                                       1, 0))
 ```
 
 Creat ratios: 
@@ -136,8 +114,7 @@ TEAM_BASERUN_Ratio = TEAM_BASERUN_SB / TEAM_BASERUN_CS (i.e. the ratio of succes
 TEAM_HR_SO_Ratio = TEAM_BATTING_HR / TEAM_BATTING_SO (i.e. the ratio of home runs to strikeouts)
 ```{r}
 train_clean = train_clean %>%
-  mutate(TARGET_WINS_Ratio = TARGET_WINS / 162,
-         H_Ratio = (BATTING_1B + BATTING_2B + BATTING_3B + BATTING_HR) / PITCHING_H,
+  mutate(H_Ratio = (BATTING_1B + BATTING_2B + BATTING_3B + BATTING_HR) / PITCHING_H,
          BASERUN_Ratio = BASERUN_SB / BASERUN_CS,
          HR_SO_Ratio = BATTING_HR / ifelse(BATTING_SO == 0, median(BATTING_SO), BATTING_SO))
 ```
@@ -147,8 +124,53 @@ train_clean = train_clean %>%
 Using the training data set, build at least three different multiple linear regression models, using different variables (or the same variables with different transformations). Since we have not yet covered automated variable selection methods, you should select the variables manually (unless you previously learned Forward or Stepwise selection, etc.). Since you manually selected a variable for inclusion into the model or exclusion into the model, indicate why this was done.
 Discuss the coefficients in the models, do they make sense? For example, if a team hits a lot of Home Runs, it would be reasonably expected that such a team would win more games. However, if the coefficient is negative (suggesting that the team would lose more games), then that needs to be discussed. Are you keeping the model even though it is counter intuitive? Why? The boss needs to know.
 
+Model 1: Simple linear regression using all features in training dataset
+```{r}
+library(caret)
+train_model1 = train_clean
+train_model1 = train_model1 %>% select(-INDEX,-BATTING_HBP)
+model1 = train(TARGET_WINS ~ ., data = train_model1, method = 'lm', na.action=na.exclude)
+summary(model1)
+```
 
+###Model2 Principal Component Analysis 
+Given there is strong multicolinearity among variable, it is better to conduct principal component analysis on dataset in order to eliminate the colinearity. 
 
+```{r,echo=FALSE}
+library(factoextra)
+train_model2 = train_clean
+train_model2 = train_model2 %>% 
+        select(-INDEX,-BATTING_HBP)%>%
+        na.omit()
+prin_comp <- prcomp(train_model2%>%select(-TARGET_WINS), scale. = T)
+
+```
+
+```{r}
+biplot(prin_comp, scale = 0)
+```
+```{r}
+std_dev <- prin_comp$sdev
+pr_var <- std_dev^2
+prop_varex <- pr_var/sum(pr_var)
+ plot(prop_varex, xlab = "Principal Component",
+             ylab = "Proportion of Variance Explained",
+             type = "b")
+```
+```{r}
+plot(cumsum(prop_varex), xlab = "Principal Component",
+              ylab = "Cumulative Proportion of Variance Explained",
+              type = "b")
+```
+This plot shows that 15 components results in variance close to ~ 98%. Therefore, in this case, we’ll select number of components as 15 [PC1 to PC15] and proceed to the modeling stage. This completes the steps to implement PCA on train data. For modeling, we’ll use these 15 components as predictor variables and follow the normal procedures.
+
+```{r}
+model2_pca.data <- data.frame(TARGET_WINS = train_model2$TARGET_WINS, prin_comp$x)
+model2_pca.data = model2_pca.data[1:16]
+model2 = train(TARGET_WINS ~ ., data = model2_pca.data , method = 'lm', na.action=na.exclude)
+summary(model2)
+
+```
 
 
 ```{r}
