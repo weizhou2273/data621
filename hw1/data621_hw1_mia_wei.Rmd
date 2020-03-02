@@ -1,6 +1,7 @@
+  
 ---
 title: "data621_hw1_mia_wei"
-author: "Wei Zhou"
+author: "Wei Zhou, Mia Chen"
 date: "2/29/2020"
 output: html_document
 ---
@@ -13,14 +14,27 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r, echo=FALSE}
 library(tidyverse)
-library(corrplot)
-library(psych)
+library(caTools)
 ```
 
 ```{r}
-train <- read.csv("https://raw.githubusercontent.com/miachen410/DATA621/master/moneyball-training-data.csv")
-head(train)
+# Read in the data
+data <- read.csv("https://raw.githubusercontent.com/miachen410/DATA621/master/moneyball-training-data.csv")
+glimpse(data)
 ```
+
+```{r}
+# Split data into training set and testing set by 7:3 ratio
+set.seed(123)
+train_ind = sample(seq_len(nrow(data)), size = nrow(data)*.7)
+train = data[train_ind, ]
+test = data[-train_ind, ]
+```
+
+```{r}
+glimpse(train)
+```
+
 
 ## 1. DATA EXPLORATION (25 Points)
 Describe the size and the variables in the moneyball training data set. Consider that too much detail will cause a manager to lose interest while too little detail will make the manager consider that you aren’t doing your job. Some suggestions are given below. Please do NOT treat this as a check list of things to do to complete the assignment. You should have your own thoughts on what to tell the boss. These are just ideas.
@@ -28,8 +42,8 @@ Describe the size and the variables in the moneyball training data set. Consider
 ```{r}
 # Cleaning the column names by removing TEAMS_
 names(train) <- gsub("TEAM_", "", names(train))
+names(test) <- gsub("TEAM_", "", names(test))
 summary(train)
-
 ```
 
 ### a. Mean / Standard Deviation / Median
@@ -42,9 +56,7 @@ ggplot(train, aes(x = TARGET_WINS)) +
 ```{r}
 library(reshape)
 library(ggplot2)
-
 par(mfrow = c(3, 3))
-
 datasub = melt(train)
 ggplot(datasub, aes(x= value)) + 
     geom_density(fill='blue') + 
@@ -76,7 +88,6 @@ aggr_plot <- aggr(train,
                   cex.axis=.7,
                   gap=3, 
                   ylab=c("Histogram of missing data","Pattern"))
-
 ```
 
 ## 2. DATA PREPARATION (25 Points)
@@ -96,7 +107,6 @@ train_clean = train %>% mutate(
   BASERUN_SB = ifelse(is.na(train$BASERUN_SB), median(train$BASERUN_SB, na.rm = TRUE), train$BASERUN_SB),
   BASERUN_CS = ifelse(is.na(train$BASERUN_CS), median(train$BASERUN_CS, na.rm = TRUE), train$BASERUN_CS),
   FIELDING_DP = ifelse(is.na(train$FIELDING_DP), median(train$FIELDING_DP, na.rm = TRUE), train$FIELDING_DP))
-
 ```
 
 
@@ -143,12 +153,12 @@ train_model2 = train_model2 %>%
         select(-INDEX,-BATTING_HBP)%>%
         na.omit()
 prin_comp <- prcomp(train_model2%>%select(-TARGET_WINS), scale. = T)
-
 ```
 
 ```{r}
 biplot(prin_comp, scale = 0)
 ```
+
 ```{r}
 std_dev <- prin_comp$sdev
 pr_var <- std_dev^2
@@ -157,6 +167,7 @@ prop_varex <- pr_var/sum(pr_var)
              ylab = "Proportion of Variance Explained",
              type = "b")
 ```
+
 ```{r}
 plot(cumsum(prop_varex), xlab = "Principal Component",
               ylab = "Cumulative Proportion of Variance Explained",
@@ -169,66 +180,48 @@ model2_pca.data <- data.frame(TARGET_WINS = train_model2$TARGET_WINS, prin_comp$
 model2_pca.data = model2_pca.data[1:16]
 model2 = train(TARGET_WINS ~ ., data = model2_pca.data , method = 'lm', na.action=na.exclude)
 summary(model2)
-
 ```
 
 
 ```{r}
-# pairs.panels(train_select, method = "pearson")
+model3 <- lm(TARGET_WINS ~ BATTING_H+BATTING_2B+BATTING_3B+BATTING_HR+BATTING_BB+BATTING_HBP-BATTING_SO+BASERUN_SB-BASERUN_CS-FIELDING_E+FIELDING_DP-PITCHING_BB-PITCHING_H-PITCHING_HR+PITCHING_SO, data = train_clean)
+summary(model3)
+```
+
+
+Compare the RMSE(Root Mean Squared Error) among the 3 models - model 3 appears to have the lowest RMSE
+```{r}
+fit1 <- fitted.values(model1)
+error1 <- fit1 - test$TARGET_WINS
+rmse1 <- sqrt(mean(error1^2))
+rmse1
+```
+
+
+
+```{r}
+fit2 <- fitted.values(model2)
+error2 <- fit2 - test$TARGET_WINS
+rmse2 <- sqrt(mean(error2^2))
+rmse2
 ```
 
 ```{r}
-par(mfrow=c(2,2))
-plot(train$BATTING_H, train$TARGET_WINS)
-plot(log(train$BATTING_H), train$TARGET_WINS)
-plot(train$BATTING_H, log(train$TARGET_WINS))
-plot(log(train$BATTING_H), log(train$TARGET_WINS))
-par(mfrow=c(2,2))
-plot(train$BATTING_H, train$TARGET_WINS)
-plot(sqrt(train$BATTING_H), train$TARGET_WINS)
-plot(train$BATTING_H, sqrt(train$TARGET_WINS))
-plot(sqrt(train$BATTING_H), sqrt(train$TARGET_WINS))
+fit3 <- fitted.values(model3)
+error3 <- fit3 - test$TARGET_WINS
+rmse3 <- sqrt(mean(error3^2))
+rmse3
 ```
 
-Not much differences were made after the transformations.
+## Model selection rationale
 
-```{r}
-# lm1 <- lm(TARGET_WINS ~ log(BATTING_H), data = train_complete)
-# summary(lm1)
-```
+As discussed above, we selected Model2, which was based on principal component analysis, followed by removal of any highly collinear variables. Although Model2 did not have the lowest RMSE, it was the most stable (little collinearity between variables).
 
-```{r}
-par(mfrow=c(2,2))
-plot(train$BATTING_2B, train$TARGET_WINS)
-plot(log(train$BATTING_2B), train$TARGET_WINS)
-plot(train$BATTING_2B, log(train$TARGET_WINS))
-plot(log(train$BATTING_2B), log(train$TARGET_WINS))
-par(mfrow=c(2,2))
-plot(train$BATTING_2B, train$TARGET_WINS)
-plot(sqrt(train$BATTING_2B), train$TARGET_WINS)
-plot(train$BATTING_2B, sqrt(train$TARGET_WINS))
-plot(sqrt(train$BATTING_2B), sqrt(train$TARGET_WINS))
-```
+Inference and regression diagnostics
 
-```{r}
-lm2 <- lm(TARGET_WINS ~ BATTING_2B, data = train)
-summary(lm2)
-```
+For our inferences to be valid, we need to perform some regression diagnostics and validate some assumptions:
 
-```{r}
-par(mfrow=c(2,2))
-plot(train$BATTING_BB, train$TARGET_WINS)
-plot(log(train$BATTING_BB), train$TARGET_WINS)
-plot(train$BATTING_BB, log(train$TARGET_WINS))
-# plot(log(train$BATTING_BB), log(train$TARGET_WINS))
-par(mfrow=c(2,2))
-plot(train$BATTING_BB, train$TARGET_WINS)
-plot(sqrt(train$BATTING_BB), train$TARGET_WINS)
-plot(train$BATTING_BB, sqrt(train$TARGET_WINS))
-plot(sqrt(train$BATTING_BB), sqrt(train$TARGET_WINS))
-```
-
-```{r}
-# lm3 <- lm(TARGET_WINS ~ log(BATTING_BB), data = train_complete)
-# summary(lm3)
-```
+Independence of errors: Based on the residual plot below, the residuals appear random over the index values
+Outliers and leverage: Based on the leverage plots below, there do not appear to be any data points exerting undue leverage on the regression
+Normality: Based on the qq-plot below, the residuals are fairly normally distributed, although there are some outliers in the tails
+Constant variance: Based on the spread-level plot below, variance appears relatively constant, although again with a few outliers
