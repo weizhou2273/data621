@@ -78,15 +78,16 @@ str(all_train)
 Just to make the data easier on the eyes, we convert the 1s in `chas` to "Y", if the neighborhood borders Charles River, and 0s to "N", if not.
 
 ```{r}
-all_train$chas[all_train$chas == 1] <- "Y"
-all_train$chas[all_train$chas == 0] <- "N"
+# all_train$chas[all_train$chas == 1] <- "Y"
+# all_train$chas[all_train$chas == 0] <- "N"
 ```
 
 We also convert the 1s in `target` to "Above", if the crime rate is above the median, and 0s to "Below", if it is below the median.
 
 ```{r}
-all_train$target[all_train$target == 1] <- "Above"
-all_train$target[all_train$target == 0] <- "Below"
+# all_train$target[all_train$target == 1] <- "Above"
+# all_train$target[all_train$target == 0] <- "Below"
+
 ```
 
 Since variables `chas` and `target` are categorical, we are going to change their class from integer to factor:
@@ -157,21 +158,22 @@ Describe how you have transformed the data by changing the original variables or
 From the boxplots above, we can see there are many outliers so we are going to fix them by replacing with medians.
 
 ```{r}
-train_clean <- all_train %>% mutate(
-  zn = ifelse(zn > 80, median(zn), zn),
-  indus = ifelse(indus > 20, median(indus), indus),
-  rm = ifelse(rm > 7.5 | rm < 5, median(rm), rm),
-  dis = ifelse(dis > 7.5, median(dis), dis),
-  tax = ifelse(tax >= 700, median(tax), tax),
-  ptratio = ifelse(ptratio < 15, median(ptratio), ptratio),
-  lstat = ifelse(lstat > 23, median(lstat), lstat),
-  medv = ifelse(medv > 35 | medv < 10, median(medv), medv)
-)
+train_clean_pre <- all_train 
+# %>% mutate(
+#   zn = ifelse(zn > 80, median(zn), zn),
+#   indus = ifelse(indus > 20, median(indus), indus),
+#   rm = ifelse(rm > 7.5 | rm < 5, median(rm), rm),
+#   dis = ifelse(dis > 7.5, median(dis), dis),
+#   tax = ifelse(tax >= 700, median(tax), tax),
+#   ptratio = ifelse(ptratio < 15, median(ptratio), ptratio),
+#   lstat = ifelse(lstat > 23, median(lstat), lstat),
+#   medv = ifelse(medv > 35 | medv < 10, median(medv), medv)
+# )
 
 set.seed(121)
-split <- caret::createDataPartition(train_clean$target, p=0.85, list=FALSE)
-train_clean <- train_clean[split, ]
-validation <- train_clean[ -split, ]
+split <- caret::createDataPartition(train_clean_pre$target, p=0.85, list=FALSE)
+train_clean <- train_clean_pre[split, ]
+validation <- train_clean_pre[ -split, ]
 
 ```
 
@@ -198,8 +200,6 @@ We first create a full model by including all the variables:
 ```{r}
 fullMod <- glm(target ~ ., data = train_clean, family = 'binomial')
 summary(fullMod)
-
-summary(train_clean)
 ```
 
 
@@ -257,21 +257,20 @@ formula(logMod3) # Model 3 formula
 
 
 ```{r}
-
 preds1 =predict(logMod1, newdata = validation)
 preds2 =predict(logMod2, newdata = validation)
 preds3 =predict(logMod3, newdata = validation)
 
-preds1[preds1 >= 0.5] <- "Above"
-preds1[preds1 < 0.5] <- "Below"
+preds1[preds1 >= 0.5] <- 1
+preds1[preds1 < 0.5] <- 0
 preds1 = as.factor(preds1)
 
-preds2[preds2 >= 0.5] <- "Above"
-preds2[preds2 < 0.5] <- "Below"
+preds2[preds2 >= 0.5] <- 1
+preds2[preds2 < 0.5] <- 0
 preds2 = as.factor(preds2)
 
-preds3[preds3 >= 0.5] <- "Above"
-preds3[preds3 < 0.5] <- "Below"
+preds3[preds3 >= 0.5] <- 1
+preds3[preds3 < 0.5] <- 0
 preds3 = as.factor(preds3)
 
 ```
@@ -315,12 +314,12 @@ Summ_Stat <-data.frame(m1cM$byClass,
   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),full_width = F)
 Summ_Stat
 ```
-
+## Model 2,3 has better AUC
 ```{r}
 getROC <- function(model) {
     name <- deparse(substitute(model))
     pred.prob1 <- predict(model, newdata = validation)
-    p1 <- data.frame(pred = validation$target, prob = pred.prob1[[1]])
+    p1 <- data.frame(pred = validation$target, prob = pred.prob1)
     p1 <- p1[order(p1$prob),]
     rocobj <- pROC::roc(p1$pred, p1$prob)
     plot(rocobj, asp=NA, legacy.axes = TRUE, print.auc=TRUE,
@@ -331,52 +330,20 @@ getROC(logMod1)
 getROC(logMod2)
 getROC(logMod3)
 ```
+## Model 2 and 3 has lower AIC. Based on comparison result, we eventually choose Model 2/3 (same model)
 
+
+# Make Prediction 
 ```{r}
-# null_model <- glm(target ~ 1, data = train_clean, family = 'binomial')
-# models <- list(logMod1, logMod2, logMod3)
-# Predictor <- models %>% 
-#   lapply(function(x) str_c(unlist(row.names(summary(x)$coefficients)), collapse = ',')) %>%
-#   unlist() %>% str_remove('\\(Intercept\\)\\,')
-# McFaddens_R2 <- list(1-logLik(logMod1)/logLik(null_model),
-#                      1-logLik(logMod2)/logLik(null_model),
-#                      1-logLik(logMod3)/logLik(null_model)) %>%
-#   unlist()
-# 
-# AIC <- models %>%
-#   lapply(function(x) AIC(x)) %>%
-#   unlist()
-# AICc <- models %>%
-#   lapply(function(x) AICc(x)) %>%
-#   unlist()
-# BIC <- models %>%
-#   lapply(function(x) BIC(x)) %>%
-#   unlist()
-# cbind(Predictor, McFaddens_R2, AIC, AICc, BIC) %>%
-#   as.data.frame(stringsAsFactors = FALSE) %>%
-#   mutate_at(c('McFaddens_R2','AIC','AICc','BIC'), as.numeric) %>%
-#   mutate(Model = c(str_c('Model ', c(1:6)))) %>%
-#   dplyr::select(Model, everything()) %>%
-#   add_row(Model = 'Model 7', Predictor = 'Same as Model 5') %>%
-#   add_row(Model = 'Model 8', Predictor = 'Same as Model 6') %>%
-#   mutate_if(is.numeric, round,3) %>%
-#   mutate(McFaddens_R2 = cell_spec(McFaddens_R2, 
-#                                   bold = if_else(McFaddens_R2 == max(McFaddens_R2, na.rm = TRUE), TRUE, FALSE),
-#                                   font_size = if_else(McFaddens_R2 == max(McFaddens_R2, na.rm = TRUE), 15, 12)),
-#          AIC = cell_spec(AIC, 
-#                          bold = if_else(AIC == min(AIC, na.rm = TRUE), TRUE, FALSE),
-#                          font_size = if_else(AIC == min(AIC, na.rm = TRUE), 14, 12)),
-#          AICc = cell_spec(AICc, 
-#                           bold = if_else(AICc == min(AICc, na.rm = TRUE), TRUE, FALSE),
-#                           font_size = if_else(AICc == min(AICc, na.rm = TRUE), 14, 12)),
-#          BIC = cell_spec(BIC, 
-#                          bold = if_else(BIC == min(BIC, na.rm = TRUE), TRUE, FALSE),
-#                          font_size = if_else(BIC == min(BIC, na.rm = TRUE), 14, 12)),
-#          Model = cell_spec(Model, 
-#                            bold = if_else(Model == 'Model 5', TRUE, FALSE),
-#                            font_size = if_else(Model == 'Model 5', 14, 12))) %>%
-#   kable('html', escape = F) %>%
-#   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),full_width = F)
+eval$chas <- as.factor(eval$chas)
+prediction = predict(logMod2, newdata = eval)
+prediction[prediction >= 0.5] <- 1
+prediction[prediction < 0.5] <- 0
+prediction = as.factor(prediction)
 
+prediction
 ```
+
+
+
 
