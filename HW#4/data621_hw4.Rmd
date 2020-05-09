@@ -1,0 +1,362 @@
+---
+title: "DATA621 - HW#4"
+author: "Mia Chen, Wei Zhou"
+date: "4/26/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(e1071)
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+library(FactoMineR)
+library(VIF)
+library(knitr)
+library(kableExtra)
+library(Hmisc)
+library(pROC)
+# library(binr)
+```
+
+# Overview
+
+In this homework assignment, you will explore, analyze and model a data set containing approximately 8000 records representing a customer at an auto insurance company. Each record has two response variables. The first response variable, TARGET_FLAG, is a 1 or a 0. A “1” means that the person was in a car crash. A zero means that the person was not in a car crash. The second response variable is TARGET_AMT. This value is zero if the person did not crash their car. But if they did crash their car, this number will be a value greater than zero. 
+
+Your objective is to build multiple linear regression and binary logistic regression models on the training data to predict the probability that a person will crash their car and also the amount of money it will cost if the person does crash their car. You can only use the variables given to you (or variables that you derive from the variables provided).
+
+# 1. DATA EXPLORATION
+
+Describe the size and the variables in the insurance training data set. Consider that too much detail will cause a manager to lose interest while too little detail will make the manager consider that you aren’t doing your job.
+
+### Data acquisition
+
+```{r}
+train = read.csv("https://raw.githubusercontent.com/miachen410/DATA621/master/HW%234/insurance_training_data.csv")
+
+```
+
+### Data structure
+
+There are 8161 observations and 26 variables in the training dataset.
+
+```{r}
+dim(train)
+```
+
+
+We want to get rid of the `$` and `,` in the numerical data and `z_` in the categorical data:
+```{r}
+currencyconv = function(input) {
+  out = sub("\\$", "", input)
+  out = as.numeric(sub(",", "", out))
+  return(out)
+}
+# Replace spaces with underscores
+underscore = function(input) {
+  out = sub(" ", "_", input)
+  return(out)
+}
+train = as.tbl(train) %>% 
+  mutate_at(c("INCOME","HOME_VAL","BLUEBOOK","OLDCLAIM"),
+            currencyconv) %>% 
+  mutate_at(c("EDUCATION","JOB","CAR_TYPE","URBANICITY"),
+            underscore) %>% 
+  mutate_at(c("EDUCATION","JOB","CAR_TYPE","URBANICITY"),
+            as.factor) %>% 
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG))
+
+```
+
+Let's look at the data structure again:
+```{r}
+summary(train) %>% kable() %>% kable_styling()
+sapply(train, function(x) sum(is.na(x))) %>% kable() %>% kable_styling()
+
+```
+
+
+### Visulization of the data set
+
+Let's first look at the density plots of the numerical variables to view their shapes and distributions:
+
+```{r}
+ntrain<-select_if(train, is.numeric)
+ntrain %>%
+  keep(is.numeric) %>%                     # Keep only numeric columns
+  gather() %>%                             # Convert to key-value pairs
+  ggplot(aes(value)) +                     # Plot the values
+    facet_wrap(~ key, scales = "free") +   # In separate panels
+    geom_density()  
+```
+
+
+
+# 2. DATA PREPARATION
+
+Describe how you have transformed the data by changing the original variables or creating new variables. If you did transform the data or create new variables, discuss why you did this.
+
+### Missing values
+
+There are 970 rows of data with NA values. We are going to replacing them with their median values.
+
+```{r}
+# impute data for missing values
+# use column mean for calculation
+train$AGE[is.na(train$AGE)] <- mean(train$AGE, na.rm=TRUE)
+train$YOJ[is.na(train$YOJ)] <- mean(train$YOJ, na.rm=TRUE)
+train$HOME_VAL[is.na(train$HOME_VAL)] <- mean(train$HOME_VAL, na.rm=TRUE)
+train$CAR_AGE[is.na(train$CAR_AGE)] <- mean(train$CAR_AGE, na.rm=TRUE)
+train$INCOME[is.na(train$INCOME)] <- mean(train$INCOME, na.rm=TRUE)
+#get complete cases
+train <- train[complete.cases(train),]
+train2<-train
+```
+
+```{r,echo=FALSE}
+# # transform data using log for skewed HOMEKIDS, MVR_PTS, OLDCLAIM, TIF, KIDSDRIVE and CLM_FREQ 
+train$HOMEKIDS <- log(train$HOMEKIDS+1)
+train$MVR_PTS <- log(train$MVR_PTS+1)
+train$OLDCLAIM <- log(train$OLDCLAIM+1)
+train$TIF <- log(train$TIF+1)
+train$KIDSDRIV <- log(train$KIDSDRIV+1)
+train$CLM_FREQ <- log(train$CLM_FREQ+1)
+```
+
+```{r}
+train <- train[, !(colnames(train) %in% c("INDEX"))]
+# 
+# #create variable
+# train$new <- train$tax / (train$medv*10)
+# 
+trainnum <- dplyr::select_if(train, is.numeric)
+rcorr(as.matrix(trainnum))
+corrplot(cor(trainnum), method="square")
+cor.test(trainnum$HOMEKIDS,trainnum$AGE,method="pearson")
+train2<-train
+
+
+```
+
+
+# 3. BUILD MODELS
+
+Using the training data set, build at least two different multiple linear regression models and three different binary logistic regression models, using different variables (or the same variables with different transformations). You may select the variables manually, use an approach such as Forward or Stepwise, use a different approach such as trees, or use a combination of techniques. Describe the techniques you used. If you manually selected a variable for inclusion into the model or exclusion into the model, indicate why this was done.
+
+Discuss the coefficients in the models, do they make sense? For example, if a person has a lot of traffic tickets, you would reasonably expect that person to have more car crashes. If the coefficient is negative (suggesting that the person is a safer driver), then that needs to be discussed. Are you keeping the model even though it is counter intuitive? Why? The boss needs to know.
+
+
+## Binary Logistic Regression Models
+
+We first create a full model by including all the variables. 
+
+Coefficients (+ or -) of variables with significant p-values:
+
+* KIDSDRIV (+): When teenagers drive your car, the car is more likely to get into crashes
+
+* INCOME (-): Rich people are less likely to get into crashes
+
+* PARENT1/yes (+): Single parent is more likely to get into crashes
+
+* HOME_VAL (-): Home owners tend to drive more responsibly
+
+* MSTATUS/yes (-): Married people tend to drive more safely
+
+* EDUCATION/bachelor, master, phd (-): More educated people tend to drive more safely
+
+* JOB/blue collar, clerical (+): Blue collar and clerical workers are more likely to get into crashes
+
+* JOB/manager (-): Manegements tend to drive more safely
+
+* TRAVTIME (+): Long drives to work suggest greater risk
+
+* CAR_USE/private (-): Private cars are being driving less than commericial cars, thus the probability of collision is lower
+
+* BLUEBOOK (-): Unknown effect on probability of collision, but probably effect the payout if there is a crash
+
+* TIF (-): People who have been customers for a long time are usually more safe
+
+* CAR_TYPE/panel truck, pickup, sports car, suv, van (+): Sports car has the highest coefficient, more likely to get into a car crash
+
+* CLM_FREQ (+): The more claims you filed in the past 5 years, the more you are likely to file in the future
+
+* REVOKED/yes (+): If your license was revoked in the past 7 years, you probably are a more risky driver
+
+* MVR_PTS (+): If you get lots of traffic tickets, you tend to get into more crashes
+
+* URBANICITY/highly urban, urban (+): If you live in the city, you are more likely to get into a crash
+
+```{r}
+
+#MODEL 1
+logit <- glm(formula = TARGET_FLAG ~ . - TARGET_AMT, data=train, family = "binomial" (link="logit"))
+summary(logit)
+exp(logit$coefficients)
+logitscalar <- mean(dlogis(predict(logit, type = "link")))
+logitscalar * coef(logit)
+confint.default(logit)
+predlogit <- predict(logit, type="response")
+train2$pred1 <- predict(logit, type="response")
+summary(predlogit)
+table(true = train$TARGET_FLAG, pred = round(fitted(logit)))
+#plots for Model 1
+par(mfrow=c(2,2))
+plot(logit)
+data.frame(train2$pred1) %>%
+    ggplot(aes(x = train2.pred1)) + 
+    geom_histogram(bins = 50, fill = 'grey50') +
+    labs(title = 'Histogram of Predictions') +
+    theme_bw()
+plot.roc(train$TARGET_FLAG, train2$pred1)
+#extract variables that are significant and rerun model
+sigvars <- data.frame(summary(logit)$coef[summary(logit)$coef[,4] <= .05, 4])
+sigvars <- add_rownames(sigvars, "vars")
+colist<-dplyr::pull(sigvars, vars)
+# colist<-colist[2:11]
+colist<-c("KIDSDRIV","INCOME","PARENT1","HOME_VAL","MSTATUS","EDUCATION","JOB","TRAVTIME","CAR_USE","BLUEBOOK","TIF","CAR_TYPE","CLM_FREQ","REVOKED","MVR_PTS","URBANICITY")
+idx <- match(colist, names(train))
+trainmod2 <- cbind(train[,idx], train2['TARGET_FLAG'])
+#MODEL 2
+logit2 <- glm(TARGET_FLAG ~ ., data=trainmod2, family = "binomial" (link="logit"))
+summary(logit2)
+exp(logit2$coefficients)
+logit2scalar <- mean(dlogis(predict(logit2, type = "link")))
+logit2scalar * coef(logit2)
+predlogit2 <- predict(logit2, type="response")
+train2$pred2 <- predict(logit2, type="response")
+summary(predlogit2)
+table(true = train$TARGET_FLAG, pred = round(fitted(logit2)))
+#plots for Model 2
+par(mfrow=c(2,2))
+plot(logit2)
+data.frame(train2$pred2) %>%
+    ggplot(aes(x = train2.pred2)) + 
+    geom_histogram(bins = 50, fill = 'grey50') +
+    labs(title = 'Histogram of Predictions') +
+    theme_bw()
+plot.roc(train$TARGET_FLAG, train2$pred2)
+#MODEL 3
+#PC Model no racial bias
+logit3 <- glm(TARGET_FLAG ~ KIDSDRIV + INCOME + HOME_VAL + TRAVTIME, data=train, family = "binomial" (link="logit"))
+summary(logit3)
+exp(logit3$coefficients)
+predlogit3 <- predict(logit3, type="response")
+train2$pred3 <- predict(logit3, type="response")
+summary(predlogit3)
+table(true = train$TARGET_FLAG, pred = round(fitted(logit3)))
+#plots for Model 3
+par(mfrow=c(2,2))
+plot(logit3)
+data.frame(train2$pred3) %>%
+    ggplot(aes(x = train2.pred3)) + 
+    geom_histogram(bins = 50, fill = 'grey50') +
+    labs(title = 'Histogram of Predictions') +
+    theme_bw()
+plot.roc(train$TARGET_FLAG, train2$pred3)
+logit3scalar <- mean(dlogis(predict(logit3, type = "link")))
+logit3scalar * coef(logit3)
+round(logitscalar * coef(logit),2)
+round(logit2scalar * coef(logit2),2)
+round(logit3scalar * coef(logit3),2)
+
+```
+
+
+## Build Models GENERAL TARGET_AMT
+```{r}
+#MODEL 1
+model <- lm(TARGET_AMT ~ ., data=train)
+summary(model)
+par(mfrow=c(1,2))
+plot(model$residuals ~ model$fitted.values)
+plot(model$fitted.values,train$TARGET_AMT)
+par(mfrow=c(2,2))
+plot(model)
+#extract variables that are significant and rerun model
+sigvars <- data.frame(summary(model)$coef[summary(model)$coef[,4] <= .05, 4])
+sigvars <- add_rownames(sigvars, "vars")
+colist<-dplyr::pull(sigvars, vars)
+colist<-c("TARGET_FLAG","BLUEBOOK","REVOKED","MVR_PTS","CAR_AGE")
+idx <- match(colist, names(train))
+trainmod2 <- cbind(train[,idx], train['TARGET_AMT'])
+#MODEL 2
+model2<-lm(TARGET_AMT ~ ., data=trainmod2)
+summary(model2)
+par(mfrow=c(2,2))
+plot(model2$residuals ~ model2$fitted.values)
+plot(model2$fitted.values,train$TARGET_AMT)
+par(mfrow=c(2,2))
+plot(model2)
+par(mfrow=c(1,2))
+plot(model2$residuals ~ model2$fitted.values, main="New Reduced Var Model")
+abline(h = 0)
+plot(model$residuals ~ model$fitted.values, main="Orignal Model All Vars")
+abline(h = 0)
+#MODEL 3
+#remove variables with opposite coefficients
+model3<-lm(TARGET_AMT ~ KIDSDRIV + INCOME + HOME_VAL + TRAVTIME, data=train)
+summary(model3)
+par(mfrow=c(1,2))
+plot(model3$residuals ~ model3$fitted.values)
+plot(model3$fitted.values,train$TARGET_AMT)
+par(mfrow=c(2,2))
+plot(model3)
+
+```
+
+
+
+# 4. SELECT MODELS
+
+Decide on the criteria for selecting the best multiple linear regression model and the best binary logistic regression model. Will you select models with slightly worse performance if it makes more sense or is more parsimonious? Discuss why you selected your models.
+
+For the multiple linear regression model, will you use a metric such as Adjusted R2, RMSE, etc.? Be sure to explain how you can make inferences from the model, discuss multi-collinearity issues (if any), and discuss other relevant model output. Using the training data set, evaluate the multiple linear regression model based on (a) mean squared error, (b) R2, (c) F-statistic, and (d) residual plots. For the binary logistic regression model, will you use a metric such as log likelihood, AIC, ROC curve, etc.? Using the training data set, evaluate the binary logistic regression model based on (a) accuracy, (b) classification error rate, (c) precision, (d) sensitivity, (e) specificity, (f) F1 score, (g) AUC, and (h) confusion matrix. Make predictions using the evaluation data set.
+
+```{r}
+test = read.csv("https://raw.githubusercontent.com/miachen410/DATA621/master/HW%234/insurance-evaluation-data.csv")
+test2<- test
+dim(test)
+test$TARGET_AMT <- 0
+test$TARGET_FLAG <- 0
+test = as.tbl(test) %>% 
+  mutate_at(c("INCOME","HOME_VAL","BLUEBOOK","OLDCLAIM"),
+            currencyconv) %>% 
+  mutate_at(c("EDUCATION","JOB","CAR_TYPE","URBANICITY"),
+            underscore) %>% 
+  mutate_at(c("EDUCATION","JOB","CAR_TYPE","URBANICITY"),
+            as.factor) %>% 
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG))
+# impute data for missing values
+# use column mean for calculation
+test$HOMEKIDS <- log(test$HOMEKIDS+1)
+test$MVR_PTS <- log(test$MVR_PTS+1)
+test$OLDCLAIM <- log(test$OLDCLAIM+1)
+test$TIF <- log(test$TIF+1)
+test$KIDSDRIV <- log(test$KIDSDRIV+1)
+test$CLM_FREQ <- log(test$CLM_FREQ+1)
+# use column mean for calculation
+test$AGE[is.na(test$AGE)] <- mean(test$AGE, na.rm=TRUE)
+test$YOJ[is.na(test$YOJ)] <- mean(test$YOJ, na.rm=TRUE)
+test$HOME_VAL[is.na(test$HOME_VAL)] <- mean(test$HOME_VAL, na.rm=TRUE)
+test$CAR_AGE[is.na(test$CAR_AGE)] <- mean(test$CAR_AGE, na.rm=TRUE)
+test$INCOME[is.na(test$INCOME)] <- mean(test$INCOME, na.rm=TRUE)
+#get complete cases
+#remove rad per correlation in prior section
+test <- test[, !(colnames(test) %in% c("INDEX"))]
+TARGET_FLAG <- predict(logit, newdata = test, type="response")
+y_pred_num <- ifelse(TARGET_FLAG > 0.5, 1, 0)
+y_pred <- factor(y_pred_num, levels=c(0, 1))
+summary(y_pred)
+rbind(round(summary(predlogit),4), round(summary(TARGET_FLAG),4)) %>% kable()
+test$TARGET_FLAG <- as.factor(test$TARGET_FLAG)
+test2 <- test[, !(colnames(test) %in% c("TARGET_FLAG"))]
+TARGET_AMT<- predict(model, newdata = test, interval='confidence') #data from scaling originally to get to actual wins
+summary(TARGET_AMT)
+summary(model)
+```
+
